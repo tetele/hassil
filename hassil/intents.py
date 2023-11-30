@@ -203,6 +203,65 @@ class TextSlotList(SlotList):
 class WildcardSlotList(SlotList):
     """Matches as much text as possible."""
 
+@dataclass
+class EntitySlotFilter:
+    """Filtering criteria for Home Assistant entities."""
+
+    domain: Optional[str] = None
+    device_class: Optional[str] = None
+
+    def apply(self, entity: TextSlotValue) -> bool:
+        """Return true if the entity matches filter, false otherwise."""
+
+        if not entity.context:
+            return False
+        
+        if self.domain and entity.context.get("domain", "") != self.domain:
+            return False
+        
+        if self.device_class and entity.context.get("device_class", "") != self.device_class:
+            return False
+        
+        return True
+
+
+@dataclass
+class EntitySlotList(SlotList):
+    """Matches entities exposed by Home Assistant."""
+
+    def __init__(self, filters: List[EntitySlotFilter], target_name: str):
+        """Creates a new applicable entity list."""
+
+        self.filters = filters
+        self.target_name = target_name
+    
+    def apply(self, slot_lists: Dict[str, Any]) -> "TextSlotList":
+        """Applies the current filters on a given slot list."""
+
+        if target := slot_lists.get(self.target_name) is None:
+            raise ValueError(f"Missing slot list {{{self.target_name}}}")
+        return __class__.apply_filters(self.filters, target)
+
+    @staticmethod
+    def apply_filters(filters: List[EntitySlotFilter], target: TextSlotList, allow_template: bool = True) -> "TextSlotList":
+        """Apply filters to an existing TextSlotList that we consider to be entities."""
+
+        filtered_entities: Iterable[Union[Tuple[str, Any], Tuple[str, Any, Dict[str, Any]]]] = []
+
+        for entity in target.values:
+            skip_value = True
+            for filter in filters:
+                if filter.apply(entity):
+                    skip_value = False
+                    break
+            
+            if skip_value:
+                continue
+            
+            filtered_entities.append(entity)
+
+        return TextSlotList(values=filtered_entities)
+
 
 @dataclass
 class IntentsSettings:
@@ -358,6 +417,22 @@ def _parse_list(
     if list_dict.get("wildcard", False):
         # Wildcard
         return WildcardSlotList()
+
+    if "entities" in list_dict:
+        # Filtered entities
+        entity_filter_dict = list_dict["entities"]
+        filters = entity_filter_dict.get("filters")
+        if filters is None:
+            filters = []
+        if not isinstance(filters, List):
+            filters = [filters]
+        return EntitySlotList(
+            filters=[
+                EntitySlotFilter(**filter)
+                for filter in filters
+            ],
+            target_name=entity_filter_dict.get("target")
+        )
 
     raise ValueError(f"Unknown slot list type: {list_dict}")
 

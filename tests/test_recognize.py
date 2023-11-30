@@ -5,7 +5,7 @@ import pytest
 
 from hassil import Intents, recognize, recognize_all
 from hassil.expression import TextChunk
-from hassil.intents import TextSlotList
+from hassil.intents import EntitySlotFilter, EntitySlotList, TextSlotList
 from hassil.recognize import MISSING_ENTITY, UnmatchedRangeEntity, UnmatchedTextEntity
 
 TEST_YAML = """
@@ -92,33 +92,40 @@ def intents():
 
 @pytest.fixture
 def slot_lists():
+    entities = TextSlotList.from_tuples(
+        [
+            ("hue", "light.hue", {"domain": "light"}),
+            (
+                "garage door",
+                "cover.garage_door",
+                {"domain": "cover"},
+            ),
+            (
+                "blue curtains",
+                "cover.blue_curtains",
+                {
+                    "domain": "cover",
+                    "device_class": "curtain",
+                    "area": "living_room",
+                },
+            ),
+            (
+                "roku",
+                "media_player.roku",
+                {"domain": "media_player"},
+            ),
+        ]
+    )
     return {
         "area": TextSlotList.from_tuples(
             [("kitchen", "area.kitchen"), ("living room", "area.living_room")]
         ),
-        "name": TextSlotList.from_tuples(
+        "name": entities,
+        "cover": EntitySlotList.apply_filters(
             [
-                ("hue", "light.hue", {"domain": "light"}),
-                (
-                    "garage door",
-                    "cover.garage_door",
-                    {"domain": "cover"},
-                ),
-                (
-                    "blue curtains",
-                    "cover.blue_curtains",
-                    {
-                        "domain": "cover",
-                        "device_class": "curtain",
-                        "area": "living_room",
-                    },
-                ),
-                (
-                    "roku",
-                    "media_player.roku",
-                    {"domain": "media_player"},
-                ),
-            ]
+              EntitySlotFilter(domain="cover")
+            ],
+            entities
         ),
     }
 
@@ -360,6 +367,29 @@ def test_list_text_normalized() -> None:
     assert result is not None
     assert result.entities["test_name"].value == "tEsT    1"
 
+def test_list_entity(slot_lists) -> None:
+    """Ensure that entity filters work."""
+
+    yaml_text = """
+    language: "en"
+    intents:
+      TestCloseCoverIntent:
+        data:
+          - sentences:
+              - "close {cover}"
+    """
+
+    with io.StringIO(yaml_text) as test_file:
+        intents = Intents.from_yaml(test_file)
+    
+    intents.slot_lists = slot_lists
+
+    result = recognize("close garage door", intents)
+    assert result is not None
+    assert result.entities["cover"].value == "cover.garage_door"
+
+    result = recognize("close roku", intents)
+    assert result is None
 
 def test_skip_prefix() -> None:
     yaml_text = """

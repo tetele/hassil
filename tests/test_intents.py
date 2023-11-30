@@ -1,5 +1,5 @@
 from hassil import is_match, parse_sentence
-from hassil.intents import TextSlotList
+from hassil.intents import EntitySlotFilter, EntitySlotList, TextSlotList
 
 
 def test_no_match():
@@ -66,6 +66,16 @@ def test_list_prefix_suffix():
     assert is_match(
         "turn off abc-living room-123", sentence, slot_lists={"area": areas}
     )
+
+def test_entity_list():
+    sentence = parse_sentence("turn off the {light}")
+    entities = TextSlotList.from_tuples([
+        ('test light', 'light.test', {'domain': 'light'}),
+        ('test cover', 'cover.test', {'domain': 'cover'}),
+    ])
+    lights = EntitySlotList.apply_filters(filters=[EntitySlotFilter(domain="light")], target=entities)
+    assert is_match("turn off the test light", sentence, slot_lists={"light": lights})
+    assert not is_match("turn off the test cover", sentence, slot_lists={"light": lights})
 
 
 def test_rule():
