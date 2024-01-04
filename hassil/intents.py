@@ -135,6 +135,11 @@ class WildcardSlotList(SlotList):
     """Matches as much text as possible."""
 
 
+@dataclass
+class SentenceSlotList(WildcardSlotList):
+    """Matches a sentence within a sentence."""
+
+
 @dataclass(frozen=True)
 class IntentData:
     """Block of sentences and known slots for an intent."""
@@ -367,6 +372,10 @@ def _parse_list(
     if list_dict.get("wildcard", False):
         # Wildcard
         return WildcardSlotList()
+
+    if list_dict.get("sentence", False):
+        # Sentence
+        return SentenceSlotList()
 
     raise ValueError(f"Unknown slot list type: {list_dict}")
 

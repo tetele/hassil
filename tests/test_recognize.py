@@ -1071,3 +1071,38 @@ def test_ordering_only_wildcards() -> None:
     assert set(result.entities.keys()) == {"light", "room"}
     assert result.entities["light"].value == "light"
     assert result.entities["room"].value == "bedroom"
+
+
+def test_sentence() -> None:
+    """Test sentence slot lists/entities."""
+    yaml_text = """
+    language: "en"
+    intents:
+      Sentence:
+        data:
+          - sentences:
+              - "do (this|that)"
+      Test:
+        data:
+          - sentences:
+              - "{sentence1} and {sentence2}"
+    lists:
+      sentence1:
+        sentence: true
+      sentence2:
+        sentence: true
+    """
+
+    with io.StringIO(yaml_text) as test_file:
+        intents = Intents.from_yaml(test_file)
+
+    sentence = "do this and do that"
+    result = recognize(sentence, intents)
+    assert result is not None, f"{sentence} should match"
+    assert set(result.entities.keys()) == {"sentence1", "sentence2"}
+    assert result.entities["sentence1"].value == "do this "
+    assert result.entities["sentence2"].value == "do that"
+
+    sentence = "do squats and do push ups"
+    result = recognize(sentence, intents)
+    assert result is None, f"{sentence} should not match"

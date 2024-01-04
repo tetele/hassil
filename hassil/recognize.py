@@ -25,6 +25,7 @@ from .intents import (
     IntentData,
     Intents,
     RangeSlotList,
+    SentenceSlotList,
     SlotList,
     TextSlotList,
     WildcardSlotList,
@@ -465,7 +466,7 @@ def recognize_all(
                     intent_sentence=intent_sentence,
                 )
                 maybe_match_contexts = match_expression(
-                    local_settings, match_context, intent_sentence
+                    local_settings, match_context, intent_sentence, intents
                 )
                 for maybe_match_context in maybe_match_contexts:
                     # Close any open wildcards or unmatched entities
@@ -650,6 +651,7 @@ def recognize_all(
 def is_match(
     text: str,
     sentence: Sentence,
+    intents: Optional[Intents] = None,
     slot_lists: Optional[Dict[str, SlotList]] = None,
     expansion_rules: Optional[Dict[str, Sentence]] = None,
     skip_words: Optional[Iterable[str]] = None,
@@ -694,7 +696,10 @@ def is_match(
         intent_sentence=sentence,
     )
 
-    for maybe_match_context in match_expression(settings, match_context, sentence):
+    if intents is None:
+        intents = Intents(language, {})
+
+    for maybe_match_context in match_expression(settings, match_context, sentence, intents):
         if maybe_match_context.is_match:
             return maybe_match_context
 
@@ -724,7 +729,7 @@ def _remove_skip_words(
 
 
 def match_expression(
-    settings: MatchSettings, context: MatchContext, expression: Expression
+    settings: MatchSettings, context: MatchContext, expression: Expression, intents: Intents
 ) -> Iterable[MatchContext]:
     """Yield matching contexts for an expression"""
     if isinstance(expression, TextChunk):
@@ -812,6 +817,7 @@ def match_expression(
                             intent_sentence=context.intent_sentence,
                         ),
                         expression,
+                        intents
                     )
                     start_idx = context_text.find(chunk_text, start_idx + 1)
 
@@ -954,7 +960,7 @@ def match_expression(
             # Any may match (words | in | alternative)
             # NOTE: [optional] = (optional | )
             for item in seq.items:
-                yield from match_expression(settings, context, item)
+                yield from match_expression(settings, context, item, intents)
 
         elif seq.type == SequenceType.GROUP:
             if seq.items:
@@ -966,7 +972,7 @@ def match_expression(
                         item_context
                         for group_context in group_contexts
                         for item_context in match_expression(
-                            settings, group_context, item
+                            settings, group_context, item, intents
                         )
                     ]
                     if not group_contexts:
@@ -1004,6 +1010,7 @@ def match_expression(
                             intent_sentence=context.intent_sentence,
                         ),
                         slot_value.text_in,
+                        intents
                     )
 
                     for value_context in value_contexts:
@@ -1174,6 +1181,7 @@ def match_expression(
                                     intent_sentence=context.intent_sentence,
                                 ),
                                 TextChunk(number_words),
+                                intents
                             )
                     else:
                         _LOGGER.warning(
@@ -1200,6 +1208,44 @@ def match_expression(
                         unmatched_entities=context.unmatched_entities
                         + [UnmatchedTextEntity(name=list_ref.slot_name, text="")],
                         close_wildcards=True,
+                    )
+        elif isinstance(slot_list, SentenceSlotList):
+            if context.text:
+                # List representing another nested sentence
+                sentence_match_results = recognize_all(
+                    text=context.text,
+                    intents=intents,
+                    slot_lists=settings.slot_lists,
+                    expansion_rules=settings.expansion_rules,
+                    skip_words=[],
+                    intent_context=context.intent_context,
+                    default_response=None,
+                    allow_unmatched_entities=settings.allow_unmatched_entities,
+                    language=settings.language,
+                    edit_budget=settings.edit_budget
+                )
+                for sentence_match_result in sentence_match_results:
+                    entities = context.entities + [
+                        MatchEntity(
+                            name=list_ref.slot_name,
+                            value=sentence_match_result.intent,
+                            text=context.text,
+                        )
+                    ]
+                    
+                    yield MatchContext(
+                        entities=entities,
+                        # Copy over
+                        text=context.text,
+                        intent_context={
+                            **context,
+                            **sentence_match_result.context
+                        },
+                        is_start_of_word=sentence_match_result.context.is_start_of_word,
+                        unmatched_entities=sentence_match_result.unmatched_entities,
+                        edit_cost=sentence_match_result.edit_cost,
+                        text_chunks_matched=sentence_match_result.text_chunks_matched,
+                        intent_sentence=sentence_match_result.intent_sentence,
                     )
         elif isinstance(slot_list, WildcardSlotList):
             if context.text:
@@ -1234,7 +1280,7 @@ def match_expression(
             raise MissingRuleError(f"Missing expansion rule <{rule_ref.rule_name}>")
 
         yield from match_expression(
-            settings, context, settings.expansion_rules[rule_ref.rule_name]
+            settings, context, settings.expansion_rules[rule_ref.rule_name], intents
         )
     else:
         raise ValueError(f"Unexpected expression: {expression}")
